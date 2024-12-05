@@ -1,37 +1,18 @@
 const router = require("express").Router();
 const {
   login,
-  register,
-  me,
-  updateProfile,
-  deleteUser,
-  getUserbyId,
-  getAllUsers,
+  register,  
   forgetPassword,
   resetCodeCheck,
   resetPassword
 } = require("../controllers/auth.controller");
-const authValidation = require("../middlewares/validations/auth.validation");
-const { tokenCheck } = require("../middlewares/auth");
 
-router.get("/me", tokenCheck, me);
+const validation = require("../middlewares/validations/auth.validation");
 
-router.get("/get-user/:id", tokenCheck, getUserbyId);
-
-router.get("/get-users", tokenCheck, getAllUsers);
-
-router.post("/login", authValidation.login, login);
-
-router.post("/register", authValidation.register, register);
-
-router.post("/forget-password", authValidation.forgetPassword, forgetPassword);
-
-router.post("/reset-code-check", resetCodeCheck); // validation needed
-
-router.post("/reset-password", resetPassword); // validation needed, past password check
-
-router.patch("/update-profile/:id", tokenCheck, updateProfile); // validation needed
-
-router.delete("/delete-user/:id", tokenCheck, deleteUser);
+router.post("/auth/login", validation.login, login);
+router.post("/auth/signup", validation.register, register);
+router.post("/auth/forget-password", validation.forgetPassword, forgetPassword);
+router.post("/auth/reset-code-check", resetCodeCheck);
+router.post("/auth/reset-password", resetPassword);
 
 module.exports = router;

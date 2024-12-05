@@ -1,8 +1,8 @@
 const jwt = require("jsonwebtoken");
-const user = require("../models/user.model");
+const UserModel = require("../models/user.model");
 const APIError = require("../utils/errors");
 
-const createToken = async (user, res) => {
+const createToken = async (user) => {
   const payload = {
     sub: user._id,
     name: user.name,
@@ -13,32 +13,60 @@ const createToken = async (user, res) => {
     expiresIn: process.env.JWT_EXPIRES_IN,
   });
 
-  return res.status(201).json({
-    success: true,
-    token,
-    message: "Token created successfully",
-  });
+  return token;  
 };
 
-const tokenCheck = async (req, res, next) => {
-  const headerToken =
-    req.headers.authorization &&
-    req.headers.authorization.startsWith("Bearer ");
-  if (!headerToken) 
+const adminTokenCheck = async (req, res, next) => {
+  
+  const user = await tokenVerify(req.headers);
+
+  if (user.role !== "admin") {
+    throw new APIError("Invalid Token", 401);
+  }
+
+  req.user = user;
+  req.userId = user._id.toString();
+  
+  next();
+};
+
+const userTokenCheck = async (req, res, next) => {
+
+  const user = await tokenVerify(req.headers);
+
+  if (user.role !== "user") {
+    throw new APIError("Invalid Token", 401);
+  }
+
+  req.user = user;
+  req.userId = user._id.toString();
+
+  next();
+};
+
+const tokenVerify = async (headers) => {
+  
+  let token = null;
+  if(headers?.authorization?.startsWith("Bearer ")) {
+    token = headers.authorization.split(" ")[1];
+  }
+    
+  if (token === null) {
     throw new APIError("Invalid session, please try again", 401);
+  }
 
-  const token = req.headers.authorization.split(" ")[1];
+  return await jwt.verify(token, process.env.JWT_SECRET_KEY, async (err, decoded) => {
+    if (err) {
+      throw new APIError("Invalid Token", 401);
+    }
 
-  await jwt.verify(token, process.env.JWT_SECRET_KEY, async (err, decoded) => {
-    if (err) throw new APIError("Invalid Token", 401);
+    const user = await UserModel.findById(decoded.sub);
 
-    const userInfo = await user
-      .findById(decoded.sub);
+    if (! user) {
+      throw new APIError("Invalid Token", 401);
+    }
 
-    if (!userInfo) throw new APIError("Invalid Token", 401);
-
-    req.user = userInfo;
-    next();
+    return user;
   });
 };
 
@@ -53,31 +81,38 @@ const createTemporaryToken = async (userId, email) => {
     expiresIn: process.env.JWT_TEMPORARY_EXPIRES_IN,
   });
 
-  return "Bearer " + token;
+  return token;
 };
 
 const decodedTemporaryToken = async (temporaryToken) => {
-  const token = temporaryToken.split(" ")[1];
-  let userInfo;
-  await jwt.verify(
-    token,
+  
+  let user = null;
+  let rsp = await jwt.verify(
+    temporaryToken,
     process.env.JWT_TEMPORARY_KEY,
     async (err, decoded) => {
-      if (err) throw new APIError("Invalid Token", 401);
 
-      userInfo = await user
-        .findById(decoded.sub)
-        .select("_id name lastname email");
-      if (!userInfo) throw new APIError("Invalid Token", 401);
+      if (err) {
+        throw new APIError("Invalid Token", 401);
+      }
+
+      user = await UserModel.findById(decoded.sub);
+
+      if (! user) {
+        throw new APIError("Invalid Token", 401);
+      }
     }
   );
 
-  return userInfo;
+  console.log(rsp, user);
+
+  return user;
 };
 
 module.exports = {
   createToken,
-  tokenCheck,
   createTemporaryToken,
   decodedTemporaryToken,
+  adminTokenCheck,
+  userTokenCheck
 };

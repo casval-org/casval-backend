@@ -7,18 +7,42 @@ class AuthValidation {
     try {
       await joi
         .object({
-          nickname: joi.string()
+          username: joi.string()
             .trim()
             .lowercase()
             .min(3)
             .max(32)
             .required()
             .messages({
-              "string.base": `"nickname" must be a type of 'text'`,
-              "string.empty": `"nickname" cannot be an empty field`,
-              "string.min": `"nickname" should have a minimum length of {#limit}`,
-              "string.max": `"nickname" should have a maximum length of {#limit}`,
-              "any.required": `"nickname" is a required field`
+              "string.base": `"username" must be a type of 'text'`,
+              "string.empty": `"username" cannot be an empty field`,
+              "string.min": `"username" should have a minimum length of {#limit}`,
+              "string.max": `"username" should have a maximum length of {#limit}`,
+              "any.required": `"username" is a required field`
+            }),
+            name: joi.string()
+            .trim()
+            .min(3)
+            .max(32)
+            .required()
+            .messages({
+              "string.base": `"name" must be a type of 'text'`,
+              "string.empty": `"name" cannot be an empty field`,
+              "string.min": `"name" should have a minimum length of {#limit}`,
+              "string.max": `"name" should have a maximum length of {#limit}`,
+              "any.required": `"name" is a required field`
+            }),
+            surname: joi.string()
+            .trim()
+            .min(3)
+            .max(32)
+            .required()
+            .messages({
+              "string.base": `"surname" must be a type of 'text'`,
+              "string.empty": `"surname" cannot be an empty field`,
+              "string.min": `"surname" should have a minimum length of {#limit}`,
+              "string.max": `"surname" should have a maximum length of {#limit}`,
+              "any.required": `"surname" is a required field`
             }),
           email: joi
             .string()

@@ -1,88 +1,87 @@
-const user = require("../models/user.model");
+const UserModel = require("../models/user.model");
 const bcrypt = require("bcrypt");
 const APIError = require("../utils/errors");
 const Response = require("../utils/response");
+const crypto = require("crypto");
 const {
   createToken,
   createTemporaryToken,
   decodedTemporaryToken,
 } = require("../middlewares/auth");
-const crypto = require("crypto");
-const sendEmail = require("../utils/sendMail");
 const moment = require("moment");
+const sendEmail = require("../utils/sendMail");
 
 const login = async (req, res) => {
-  const { email, password } = req.body;
 
-  const userInfo = await user.findOne({ email });
+  const user = await UserModel.findOne({ email: req.body.email });
 
-  if (!userInfo) throw new APIError("Email or password is incorrect!", 401);
+  if (! user) {
+    throw new APIError("Email or password is incorrect!", 200);
+  }
 
-  const comparePassword = await bcrypt.compare(password, userInfo.password);
+  if (! await bcrypt.compare(req.body.password, user.password)) {
+    throw new APIError("Email or password is incorrect!", 200);
+  }
 
-  if (!comparePassword)
-    throw new APIError("Email or password is incorrect!", 401);
+  let token = await createToken(user);
 
-  createToken(userInfo, res);
+  return new Response({ token, user: userResponse(user) }, "").success(res);
 };
 
 const register = async (req, res) => {
-  const { email } = req.body;
 
-  const userCheck = await user.findOne({ email });
+  let user = await UserModel.findOne({ email: req.body.email });
 
-  if (userCheck) {
-    throw new APIError(
-      "Email already exist, please enter a different email!",
-      401
-    );
+  if (user) {
+    throw new APIError("Email already exist, please enter a different email!", 422);
   }
-  req.body.password = await bcrypt.hash(req.body.password, 10);
+  let username = await UserModel.findOne({ username: req.body.username });
 
-  const userSave = new user(req.body);
-  await userSave
-    .save()
-    .then((data) => {
-      return new Response(data, "User registered succesfully").created(res);
-    })
-    .catch((err) => {
-      throw new APIError("User can not registered, please try again!", 400);
-    });
-};
+  if (username) {
+    throw new APIError("Username already exist, please enter a different username!", 422);
+  }
 
-const me = async (req, res) => {
-  return new Response(req.user).success(res);
+  user = await UserModel.create({
+    name: req.body.name,
+    surname: req.body.surname,
+    username: req.body.username,
+    email: req.body.email,
+    password: await bcrypt.hash(req.body.password, 10),
+    role: 'user'
+  })
+  
+  let token = await createToken(user);
+
+  return new Response({ token, user: userResponse(user) }, "").success(res);
 };
 
 const forgetPassword = async (req, res) => {
-  const { email } = req.body;
 
-  const userInfo = await user
-    .findOne({ email })
-    .select("nickname email ");
+  const user = await UserModel.findOne({ email: req.body.email });
 
-  if (!userInfo) return new APIError("Invalid email", 400);
+  if (! user) {
+    return new APIError("Invalid email", 422);
+  }
 
-  const resetCode = crypto.randomBytes(3).toString("hex");
+  const code = crypto.randomBytes(3).toString("hex");
 
-  console.log(resetCode);
+  // @todo: Check Email
+  // await sendEmail({
+  //   from: process.env.EMAIL_USERNAME,
+  //   to: user.email,
+  //   subject: "Password Reset",
+  //   text: `Your password reset code: ${code}`,
+  // });
+  console.log(`Your password reset code: ${code}`);
 
-  await sendEmail({
-    from: process.env.EMAIL_USERNAME,
-    to: userInfo.email,
-    subject: "Şifre Sıfırlama Talebi",
-    text: `Şifre sıfırlama kodun: ${resetCode}`,
-  });
-
-  await user.updateOne(
-    { email },
+  await UserModel.findOneAndUpdate({email: req.body.email}, 
     {
-      reset: {
-        code: resetCode,
-        time: moment(new Date())
-          .add(15, "minute")
-          .format("YYYY-MM-DD HH:mm:ss"),
-      },
+      $set: {
+        reset: {
+          code: code,
+          time: moment(new Date()).add(15, "minute").format("YYYY-MM-DD HH:mm:ss"),
+        }
+      }
     }
   );
 
@@ -90,44 +89,39 @@ const forgetPassword = async (req, res) => {
 };
 
 const resetCodeCheck = async (req, res) => {
-  const { email, code } = req.body;
 
-  const userInfo = await user
-    .findOne({ email })
-    .select("_id name lastname email reset");
+  const user = await UserModel.findOne({ email: req.body.email });
 
-  if (!userInfo) throw new APIError("Invalid Code!", 401);
-
-  const dbTime = moment(userInfo.reset.time);
-  const nowTime = moment(new Date());
-
-  const timeDiff = dbTime.diff(nowTime, "minutes");
-
-  if (timeDiff <= 0 || userInfo.reset.code !== code) {
-    throw new APIError("Invalid Code", 401);
+  if (! user) {
+    throw new APIError("Invalid Code!", 422);
   }
 
-  const temporaryToken = await createTemporaryToken(
-    userInfo._id,
-    userInfo.email
+  const dbTime = moment(user.reset.time);
+  const nowTime = moment(new Date());
+  const timeDiff = dbTime.diff(nowTime, "minutes");
+
+  if (timeDiff <= 0 || user.reset.code !== req.body.code) {
+    throw new APIError("Invalid Code", 422);
+  }
+
+  const token = await createTemporaryToken(
+    user._id,
+    user.email
   );
 
-  return new Response(
-    { temporaryToken },
-    "You can reset your password now."
-  ).success(res);
+  return new Response({ token }, "You can reset your password now.").success(res);
 };
 
 const resetPassword = async (req, res) => {
-  const { password, temporaryToken } = req.body;
+  const user = await decodedTemporaryToken(req.body.temporaryToken);
 
-  const decodedToken = await decodedTemporaryToken(temporaryToken);
-  console.log("decodedToken : ", decodedToken);
+  if(! user) {
+    throw new APIError("Invalid Token", 422);
+  }
 
-  const hashPassword = await bcrypt.hash(password, 10);
+  const hashPassword = await bcrypt.hash(req.body.password, 10);
 
-  await user.findByIdAndUpdate(
-    { _id: decodedToken._id },
+  await UserModel.findByIdAndUpdate(user._id,
     {
       reset: {
         code: null,
@@ -137,176 +131,30 @@ const resetPassword = async (req, res) => {
     }
   );
 
-  return new Response(
-    decodedToken,
-    "Password reset is complated succesfully"
-  ).success(res);
+  return new Response(userResponse(user), "Password reset is completed succesfully").success(res);
 };
 
-const getUserbyId = async (req, res) => {
-  const { id } = req.params;
-  const userReq = req.user;
-
-  if (!userReq) {
-    throw new APIError(
-      "You are unauthorized to view these content!",
-      401
-    );
-  }
-  if (userReq.role != "admin") {
-    throw new APIError(
-      "You are unauthorized to view these content!",
-      401
-    );
-  }
-
-  const userInfo = await user.findById(id).catch((err) => {
-    throw new APIError("Something went wrong! Try Again.", 401);
-  });
-
-  if (!userInfo) throw new APIError("User not found! Try Again.", 401);
-
-  const userDetail = {
-    id: userInfo._id.toString(),
-    nickname: userInfo.nickname,
-    email: userInfo.email,
-    role: userInfo.role,
-    createdAt: userInfo.createdAt,
-    updatedAt: userInfo.updatedAt
-  }
-  return new Response(userDetail).success(res);
-};
-
-const getAllUsers = async (req, res) => {
-  const userInfo = await user.find().catch((err) => {
-    throw new APIError("Something went wrong! Try Again.", 401);
-  });
-
-  const userReq = req.user;
-
-  if (!userReq) {
-    throw new APIError(
-      "You are unauthorized to view these contents!",
-      401
-    );
-  }
-  if (userReq.role != "admin") {
-    throw new APIError(
-      "You are unauthorized to view these contents!",
-      401
-    );
-  }
-
-  if (!userInfo || userInfo.length === 0) throw new APIError("User not found! Try Again.", 401);
-
-  const usersDetails = userInfo.map((user) => {
-    return {
-      id: user._id.toString(),
-      nickname: user.nickname,
-      email: user.email,
-      role: user.role,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt
-    };
-  });
-  return new Response(usersDetails).success(res);
-};
-
-const deleteUser = async (req, res) => {
-  const { id } = req.params;
-  const userReq = req.user;
-
-  if (!userReq) {
-    throw new APIError(
-      "You are unauthorized to delete these content!",
-      401
-    );
-  }
-
-  const currenUserInfo = await user.findById(id).catch((err) => {
-    throw new APIError("Something went wrong! Try Again.", 401);
-  });
-  if (!currenUserInfo) throw new APIError("User not found! Try Again.", 401);
-
-  if (userReq.role != "admin" && currenUserInfo._id.toString() !== userReq._id.toString()) {
-    throw new APIError(
-      "You are unauthorized to delete these content!",
-      401
-    );
-  }
-
-  const userInfo = await user.findByIdAndDelete(id).catch((err) => {
-    throw new APIError("Something went wrong! Try Again.", 401);
-  });
-
-  if (!userInfo) throw new APIError("User not found! Try Again.", 401);
-
-  return new Response(userInfo).success(res);
-};
-
-const updateProfile = async (req, res) => {
-  const { id } = req.params;
-  const { nickname, password } = req.body;
-  const userReq = req.user;
-
-  if (!userReq) {
-    throw new APIError(
-      "You are unauthorized to view these contents!",
-      401
-    );
-  }
-  const currenUserInfo = await user.findById(userReq._id);
-  if (!currenUserInfo) {
-    throw new APIError("User not found! Try Again.", 401);
-  }
-
-  if (userReq.role != "admin" && currenUserInfo._id.toString() !== userReq._id.toString()) {
-    throw new APIError(
-      "You are unauthorized to view these contents!",
-      401
-    );
-  }
-
-  const userInfo = await user.findById(id);
-
-  if (!userInfo) throw new APIError("User not found! Try Again.", 401);
-
-  const comparePassword = await bcrypt.compare(password, userInfo.password);
-
-  if (!comparePassword)
-    throw new APIError("Email or password is incorrect!", 401);
-
-  const userDetail = {
-    nickname
+const userResponse = (user) => {
+  return {
+    id: user._id,
+    name: user.name,
+    surname: user.surname,
+    username: user.username,
+    email: user.email,
+    role: user.role,
+    reset: {
+      code: user.reset.code,
+      time: user.reset.time,
+    },
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
   };
-
-
-  try {
-    const updatedUser = await user.findByIdAndUpdate(id, { nickname }, { new: true });
-
-    const userDetail = {
-      id: updatedUser._id.toString(),
-      nickname: updatedUser.nickname,
-      email: updatedUser.email,
-      role: updatedUser.role,
-      createdAt: updatedUser.createdAt,
-      updatedAt: updatedUser.updatedAt
-    }
-    return new Response(updatedUser, "User updated successfully").success(res);
-  } catch (err) {
-    throw new APIError("User cannot be updated, please try again!", 400);
-  }
-};
+}
 
 module.exports = {
   login,
-  register,
-  me,
+  register,  
   forgetPassword,
   resetCodeCheck,
-  resetPassword,
-  getAllUsers,
-  getUserbyId,
-  updateProfile,
-  deleteUser,
+  resetPassword
 };
